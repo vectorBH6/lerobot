@@ -1,14 +1,14 @@
 import logging
 from copy import deepcopy
 from enum import Enum
-
+import time
 from fashionstar_uart_sdk.uart_pocket_handler import (
     PortHandler as starai_PortHandler,
     SyncPositionControlOptions,
 )
 
-from lerobot.errors import DeviceNotConnectedError
-from lerobot.utils.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
+from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.motors.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
 
 from ..motors_bus import Motor, MotorCalibration, MotorNormMode, MotorsBus, NameOrID, Value
 from .tables import (
@@ -87,7 +87,7 @@ class StaraiMotorsBus(MotorsBus):
         for motor in self.motors:
             if not self.port_handler.ping(self.motors[motor].id):
                 raise Exception(f"motor not found id:{self.motors[motor].id}")
-        self.disable_torque()
+        self.disable_torque(mode="unlocked")
         self.port_handler.ResetLoop(0xFF)
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
@@ -155,6 +155,7 @@ class StaraiMotorsBus(MotorsBus):
         values: Value | dict[str, Value],
         *,
         normalize: bool = True,
+        motion_time: int = None,
     ) -> None:
         """Write the same register on multiple motors.
 
@@ -197,12 +198,16 @@ class StaraiMotorsBus(MotorsBus):
                         raise NotImplementedError
                     else:
                         raise NotImplementedError
+            if motion_time is None:
+                data_motion_time = self.default_motion_time
+            else:
+                data_motion_time = motion_time
 
             for motor in values_:
                 data = SyncPositionControlOptions(
                     self.motors[motor].id,
                     int(((values_[motor] / 4096 * 360) - 180) * 10),
-                    self.default_motion_time,
+                    data_motion_time,
                     0,
                     DEFAULT_ACC_TIME,
                     DEFAULT_DEC_TIME,
@@ -256,14 +261,16 @@ class StaraiMotorsBus(MotorsBus):
         return calibration
 
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
+        self.calibration = calibration_dict or {}
         return
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         return
 
-    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0,mode:str="damping") -> None:
+        time.sleep(0.01)
         for motor in self._get_motors_list(motors):
-            self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id, "unlocked", 0)
+            self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id, mode, 900)
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
         return

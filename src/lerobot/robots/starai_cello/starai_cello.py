@@ -20,7 +20,7 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.starai import (
     StaraiMotorsBus,
@@ -92,6 +92,10 @@ class StaraiCello(Robot):
             )
             self.calibrate()
 
+        if self.is_calibrated:
+            logger.info(f"{self} slow start in progress, please wait for 3 seconds.")
+            self.move_to_initial_position()
+
         for cam in self.cameras.values():
             cam.connect()
         self.configure()
@@ -99,7 +103,7 @@ class StaraiCello(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.bus.is_calibrated
+        return self.calibration
 
     def calibrate(self) -> None:
         if self.calibration:
@@ -113,7 +117,7 @@ class StaraiCello(Robot):
                 return
 
         logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
+        # self.bus.disable_torque()
         # for motor in self.bus.motors:
         # self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
@@ -136,7 +140,7 @@ class StaraiCello(Robot):
                 range_max=range_maxes[motor],
             )
 
-        # self.bus.write_calibration(self.calibration)
+        self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
@@ -216,3 +220,32 @@ class StaraiCello(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
+
+    def get_action(self) -> dict[str, float]:
+        start = time.perf_counter()
+        action = self.bus.sync_read("Present_Position")
+        action = {f"{motor}.pos": val for motor, val in action.items()}
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read action: {dt_ms:.1f}ms")
+        return action
+    
+    def move_to_initial_position(self)-> dict[str, Any]:
+        postion = self.get_action()
+
+
+        # if not self.is_connected:
+        #     raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        goal_pos = {key.removesuffix(".pos"): val for key, val in postion.items() if key.endswith(".pos")}
+        goal_pos["Motor_0"] = 0
+        goal_pos["Motor_1"] = -100
+        goal_pos["Motor_2"] = 60
+        goal_pos["Motor_3"] = 0
+        goal_pos["Motor_4"] = 30
+        goal_pos["Motor_5"] = 0
+        goal_pos["gripper"] = 50
+        self.bus.sync_write("Goal_Position", goal_pos,motion_time = 1500)
+        time.sleep(1.5)
+        self.bus.disable_torque()
+        # time.sleep(2)
+        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
